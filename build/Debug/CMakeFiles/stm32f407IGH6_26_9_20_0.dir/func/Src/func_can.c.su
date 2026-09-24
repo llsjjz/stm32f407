@@ -1,0 +1,3 @@
+/home/llsjjz/STM32CubeMX/project/stm32f407IGH6_26_9_20_0/func/Src/func_can.c:5:6:func_can_init	48	static
+/home/llsjjz/STM32CubeMX/project/stm32f407IGH6_26_9_20_0/func/Src/func_can.c:27:6:func_can_transmit	64	static
+/home/llsjjz/STM32CubeMX/project/stm32f407IGH6_26_9_20_0/func/Src/func_can.c:52:6:HAL_CAN_RxFifo0MsgPendingCallback	56	static

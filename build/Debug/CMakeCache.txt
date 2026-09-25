@@ -223,7 +223,7 @@ CMAKE_STRIP:FILEPATH=/home/llsjjz/gnu_toolchain/xpack-arm-none-eabi-gcc-15.2.1-1
 //Path to a program.
 CMAKE_TAPI:FILEPATH=CMAKE_TAPI-NOTFOUND
 
-//No help, variable specified on the command line.
+//The CMake toolchain file
 CMAKE_TOOLCHAIN_FILE:FILEPATH=/home/llsjjz/STM32CubeMX/project/stm32f407IGH6_26_9_20_0/cmake/gcc-arm-none-eabi.cmake
 
 //If this value is on, makefiles will be generated without the

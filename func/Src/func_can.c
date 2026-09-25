@@ -1,6 +1,7 @@
 #include "func_can.h"
 
 Motor_Measure_t motor_info[4]={0};
+Mit_Send_t mit_send[4]={0};
 
 //**************************************************************************************************//
 
@@ -47,6 +48,19 @@ static int float_to_uint(float x, float x_min, float x_max, int bits)
     //              让 x 落在 [0, span] 区间
 }
 
+static void can_transmit(CAN_MOTOR_ID_t id,uint8_t dates[8])
+{
+    CAN_TxHeaderTypeDef tx_header;
+    uint32_t            pTxMailbox;
+
+    tx_header.StdId = id; 
+    tx_header.IDE   = CAN_ID_STD;
+    tx_header.RTR   = CAN_RTR_DATA;
+    tx_header.DLC   = 8;
+
+    HAL_CAN_AddTxMessage(&hcan1, &tx_header, dates, &pTxMailbox);
+}
+
 //**************************************************************************************************//
 
 void func_can_init(void)
@@ -60,7 +74,7 @@ void func_can_init(void)
     f.FilterBank           = 0;
 
     // 主机 ID（Master ID）= 0x200，精确匹配
-    f.FilterIdHigh     = (0x200 << 5) & 0xFFFF;   // 0x4000
+    f.FilterIdHigh     = (CAN_MASTER_ID << 5) & 0xFFFF;   // 0x4000
     f.FilterIdLow      = 0x0000;
     f.FilterMaskIdHigh = (0x7FF << 5) & 0xFFFF;   // 0xFFE0：11 位全匹配，只放行 0x200
     f.FilterMaskIdLow  = 0x0000;
@@ -71,20 +85,55 @@ void func_can_init(void)
 }
 
 
-void func_can_transmit(uint32_t id,uint8_t datas[8])
+void func_can_transmit_MIT(CAN_MOTOR_ID_t id,float position_rad_f,float speed_rads_f,float moment_Nm_f,float Kp_f,float Kd_f)
 {
-    CAN_TxHeaderTypeDef tx_header;
-    uint32_t            pTxMailbox;
+    uint8_t dates[8];
+    uint32_t index = id - CAN_MASTER_ID - 1; // 计算电机索引（0~3）
 
-    tx_header.StdId = id; 
-    tx_header.IDE   = CAN_ID_STD;
-    tx_header.RTR   = CAN_RTR_DATA;
-    tx_header.DLC   = 8;
+    mit_send[index].position_rad = float_to_uint(position_rad_f, -Pmax, Pmax, 16);
+    mit_send[index].speed_rads = float_to_uint(speed_rads_f, -Vmax, Vmax, 12);
+    mit_send[index].moment_Nm = float_to_uint(moment_Nm_f, -Tmax, Tmax, 12);
+    mit_send[index].Kp = float_to_uint(Kp_f, 0, 500.0f, 16);
+    mit_send[index].Kd = float_to_uint(Kd_f, 0, 5.0f, 16);
 
-    HAL_CAN_AddTxMessage(&hcan1, &tx_header, datas, &pTxMailbox);
+    dates[0] = mit_send[index].position_rad >> 8;
+    dates[1] = mit_send[index].position_rad & 0xFF;
+    dates[2] = mit_send[index].speed_rads >> 4;
+    dates[3] = ((mit_send[index].speed_rads & 0x0F) << 4) | (mit_send[index].Kp >> 8);
+    dates[4] = mit_send[index].Kp & 0xFF;   
+    dates[5] = mit_send[index].Kd >> 4;
+    dates[6] = ((mit_send[index].Kd & 0x0F) << 4) | (mit_send[index].moment_Nm >> 8);
+    dates[7] = mit_send[index].moment_Nm & 0xFF;
+
+    can_transmit(id,dates);
 }
 
+//**************************************************************************************************//
+void func_can_transmit_Enable(CAN_MOTOR_ID_t id)//电机使能
+{
+    uint8_t dates[8]={0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFC};
+    can_transmit(id,dates);
+}
 
+void func_can_transmit_DisEnable(CAN_MOTOR_ID_t id)//电机失能
+{
+    uint8_t dates[8]={0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFD};
+    can_transmit(id,dates);
+}
+
+void func_can_transmit_SetZero(CAN_MOTOR_ID_t id)//设置当前角度为0
+{
+    uint8_t dates[8]={0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFE};
+    can_transmit(id,dates);
+}
+
+void func_can_transmit_ClearErr(CAN_MOTOR_ID_t id)//清除错误
+{
+    uint8_t dates[8]={0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFB};
+    can_transmit(id,dates);
+}
+
+//**************************************************************************************************//
 
 void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan) 
 {
@@ -95,15 +144,21 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
     {
         HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &rx_header, rx_data);
 
-        uint8_t index = rx_data[0] & 0x0F - 1;
+        uint8_t index = (rx_data[0] & 0x0F) - 1;
         
         if(index >= 0 && index <=3)
+        {
             motor_info[index].err = rx_data[0] >> 4;
             motor_info[index].position_rad = (uint16_t)rx_data[2] | ((uint16_t)rx_data[1] << 8);
             motor_info[index].speed_rads = ((uint16_t)rx_data[4] >> 4 )| ((uint16_t)rx_data[3] << 4);
             motor_info[index].moment_Nm = (uint16_t)rx_data[5] | (((uint16_t)rx_data[4] & 0x0F) << 8);
             motor_info[index].T_Mos_dc = rx_data[6];
             motor_info[index].T_Rotor_dc = rx_data[7];
+
+            motor_info[index].position_rad_f = uint_to_float(motor_info[index].position_rad, -Pmax, Pmax, 16);
+            motor_info[index].speed_rads_f = uint_to_float(motor_info[index].speed_rads, -Vmax, Vmax, 12);
+            motor_info[index].moment_Nm_f = uint_to_float(motor_info[index].moment_Nm, -Tmax, Tmax, 12);
+        }
     }
 }
 
